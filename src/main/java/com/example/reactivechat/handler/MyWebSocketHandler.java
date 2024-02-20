@@ -1,5 +1,6 @@
 package com.example.reactivechat.handler;
 
+import com.example.reactivechat.model.ChatRoom;
 import com.example.reactivechat.model.Event;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -16,6 +17,8 @@ public class MyWebSocketHandler implements WebSocketHandler {
 
     private ObjectMapper objectMapper;
 
+    private ChatRoom chatRoom;
+
     private final Flux<Event> messages = Flux.<Event>create(sink -> {
         MyWebSocketHandler.this.sink = sink;
     }).share();
@@ -25,6 +28,7 @@ public class MyWebSocketHandler implements WebSocketHandler {
 
     public MyWebSocketHandler() {
         this.objectMapper = new ObjectMapper();
+        this.chatRoom = new ChatRoom();
     }
 
     @Override
@@ -33,8 +37,24 @@ public class MyWebSocketHandler implements WebSocketHandler {
                 .map(WebSocketMessage::getPayloadAsText)
                 .map(this::jsonToEvent)
                 .doOnNext(message -> {
-                    sink.next(message);
+                    //message.setSender(session.getId());
+                    if (!chatRoom.checkSessionId(session.getId()))
+                        if (!chatRoom.addUser(session.getId(), message.getSender())){
+                            session.send(Mono.just(session.textMessage("Error: User already exist")))
+                                    .then()
+                                    .subscribe();
+                            return;
+                        }
+                    if (chatRoom.checkUsername(session.getId(), message.getSender())) {
+                        sink.next(message);
+                        return;
+                    }
+
+                    session.send(Mono.just(session.textMessage("Error: Use your previous username")))
+                            .then()
+                            .subscribe();
                 })
+                .doFinally(event -> chatRoom.removeUser(session.getId()))
                 .subscribe();
 
         Flux<WebSocketMessage> messageFlux = messages.map(message -> session.textMessage(eventToJson(message)));
